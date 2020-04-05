@@ -146,7 +146,7 @@ EOF
     rm -f temprikey tempubkey
 
     content=$(cat /etc/wireguard/$newname.conf)
-    echo "$newname 电脑端请下载client.conf，手机端可直接使用软件扫码"
+    echo "电脑端请下载$newname 开头的client.conf，手机端可直接使用软件扫码"
     echo "${content}" | qrencode -o - -t UTF8
 }
 #开始菜单
