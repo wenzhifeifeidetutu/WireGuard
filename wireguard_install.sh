@@ -150,9 +150,8 @@ start_menu(){
     clear
     echo "========================="
     echo " 介绍：适用于CentOS7"
-    echo " 作者：********"
-    echo " 网站：www.********.com"
-    echo " Youtube：********"
+    echo " 作者：wenzhi"
+    echo " 网站：https://github.com/wenzhifeifeidetutu"
     echo "========================="
     echo "1. 升级系统内核"
     echo "2. 安装wireguard"
