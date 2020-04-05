@@ -144,6 +144,10 @@ EOF
     wg set wg0 peer $(cat tempubkey) allowed-ips 10.0.0.$newnum/32
     echo -e "\033[37;41m添加完成，文件：/etc/wireguard/$newname.conf\033[0m"
     rm -f temprikey tempubkey
+
+    content=$(cat /etc/wireguard/$newname.conf)
+    echo "$newname 电脑端请下载client.conf，手机端可直接使用软件扫码"
+    echo "${content}" | qrencode -o - -t UTF8
 }
 #开始菜单
 start_menu(){
@@ -181,6 +185,7 @@ start_menu(){
 	;;
 	6)
 	add_user
+
 	;;
 	0)
 	exit 1
