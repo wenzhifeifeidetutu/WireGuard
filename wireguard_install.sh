@@ -10,12 +10,10 @@ echo "仅支持centos7"
 exit
 fi
 
-
-
 #更新内核
 update_kernel(){
 
-    yum -y install epel-release curl
+    yum -y install epel-release
     sed -i "0,/enabled=0/s//enabled=1/" /etc/yum.repos.d/epel.repo
     yum remove -y kernel-devel
     rpm --import https://www.elrepo.org/RPM-GPG-KEY-elrepo.org
@@ -27,12 +25,43 @@ update_kernel(){
     wget https://elrepo.org/linux/kernel/el7/x86_64/RPMS/kernel-ml-devel-4.19.1-1.el7.elrepo.x86_64.rpm
     rpm -ivh kernel-ml-devel-4.19.1-1.el7.elrepo.x86_64.rpm
     yum -y --enablerepo=elrepo-kernel install kernel-ml-devel
+	#自动设置启动内核顺序
+	kernelindex=$(grep -n "menuentry " /etc/grub2.cfg | grep -n "([54]\." | awk -F: '{print $1}')
+	((kernelindex--))
+	grub2-set-default ${kernelindex}
     read -p "需要重启VPS，再次执行脚本选择安装wireguard，是否现在重启 ? [Y/n] :" yn
 	[ -z "${yn}" ] && yn="y"
 	if [[ $yn == [Yy] ]]; then
 		echo -e "VPS 重启中..."
 		reboot
 	fi
+}
+#检测内核
+check_kernel(){
+if [[ -n $(uname -r | grep "^3\.") ]] ; then
+
+	kernelindex=$(grep -n "menuentry " /etc/grub2.cfg | grep -n "([54]\." | awk -F: '{print $1}')
+	if [ -n $kernelindex ] ;then
+	        ((kernelindex--))
+	        grub2-set-default ${kernelindex}
+		read -p "内核启动顺序需要调整，是否重启以使用新内核？(y/n):" yn
+		[ -z "${yn}" ] && yn="y"
+		if [[ $yn == [Yy]  ]]; then
+			echo -e "VPS 重启中..."
+			reboot
+		fi
+		exit
+	else
+
+		read -p "内核版本过低,是否执行升级内核？(y/n)" isupdate
+        	if [[ $isupdate == "n" ]] ;then
+                	echo -e "安装终止!"
+	                exit
+        	fi
+		update_kernel
+		exit
+	fi
+fi
 }
 
 #生成随机端口
@@ -49,7 +78,6 @@ wireguard_update(){
 }
 
 wireguard_remove(){
-    wg-quick down wg0
     yum remove -y wireguard-dkms wireguard-tools
     rm -rf /etc/wireguard/
     echo "卸载完成"
@@ -59,7 +87,7 @@ config_client(){
 cat > /etc/wireguard/client.conf <<-EOF
 [Interface]
 PrivateKey = $c1
-Address = 10.0.0.2/24 
+Address = 172.16.10.2/24 
 DNS = 8.8.8.8
 MTU = 1420
 
@@ -72,9 +100,19 @@ EOF
 
 }
 
-#centos7安装wireguard 修复bug版本
+#centos7安装wireguard
 wireguard_install(){
+	check_kernel
+	read -p "input the name of the interface[default:eth0]:" netname
+	if [ "$netname" == '' ]; then
+		netname = "eth0"
+	fi
+	read -p "input the port you want to use[default:rand 10000-60000]:" port
+	if [ "$port" == '' ]; then
+		port=$(rand 10000 60000)
+	fi
     curl -Lo /etc/yum.repos.d/wireguard.repo https://copr.fedorainfracloud.org/coprs/jdoss/wireguard/repo/epel-7/jdoss-wireguard-epel-7.repo
+    yum install -y epel-release
     yum install -y dkms gcc-c++ gcc-gfortran glibc-headers glibc-devel libquadmath-devel libtool systemtap systemtap-devel
     yum -y install wireguard-dkms wireguard-tools
     yum -y install qrencode
@@ -87,8 +125,7 @@ wireguard_install(){
     c1=$(cat cprivatekey)
     c2=$(cat cpublickey)
     serverip=$(curl ipv4.icanhazip.com)
-    port=$(rand 10000 60000)
-    eth=$(ls /sys/class/net | awk '/^e/{print}')
+    #port=$(rand 10000 60000)
     chmod 777 -R /etc/wireguard
     systemctl stop firewalld
     systemctl disable firewalld
@@ -102,20 +139,21 @@ wireguard_install(){
     service iptables save
     service iptables restart
     echo 1 > /proc/sys/net/ipv4/ip_forward
-    echo "net.ipv4.ip_forward = 1" > /etc/sysctl.conf	
+	sed -i '/net.ipv4.ip_forward/d' /etc/sysctl.conf
+    echo "net.ipv4.ip_forward = 1" >> /etc/sysctl.conf	
 cat > /etc/wireguard/wg0.conf <<-EOF
 [Interface]
 PrivateKey = $s1
-Address = 10.0.0.1/24 
-PostUp   = echo 1 > /proc/sys/net/ipv4/ip_forward; iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
-PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o eth0 -j MASQUERADE
+Address = 172.16.10.1/24 
+PostUp   = iptables -A FORWARD -i wg0 -j ACCEPT; iptables -A FORWARD -o wg0 -j ACCEPT; iptables -t nat -A POSTROUTING -o ${netname} -j MASQUERADE
+PostDown = iptables -D FORWARD -i wg0 -j ACCEPT; iptables -D FORWARD -o wg0 -j ACCEPT; iptables -t nat -D POSTROUTING -o ${netname} -j MASQUERADE
 ListenPort = $port
 DNS = 8.8.8.8
 MTU = 1420
 
 [Peer]
 PublicKey = $c2
-AllowedIPs = 10.0.0.2/32
+AllowedIPs = 172.16.10.2/32
 EOF
 
     config_client
@@ -125,44 +163,21 @@ EOF
     echo "电脑端请下载client.conf，手机端可直接使用软件扫码"
     echo "${content}" | qrencode -o - -t UTF8
 }
-add_user(){
-    echo -e "\033[37;41m给新用户起个名字，不能和已有用户重复\033[0m"
-    read -p "请输入用户名：" newname
-    cd /etc/wireguard/
-    cp client.conf $newname.conf
-    wg genkey | tee temprikey | wg pubkey > tempubkey
-    ipnum=$(grep Allowed /etc/wireguard/wg0.conf | tail -1 | awk -F '[ ./]' '{print $6}')
-    newnum=$((10#${ipnum}+1))
-    sed -i 's%^PrivateKey.*$%'"PrivateKey = $(cat temprikey)"'%' $newname.conf
-    sed -i 's%^Address.*$%'"Address = 10.0.0.$newnum\/24"'%' $newname.conf
 
-cat >> /etc/wireguard/wg0.conf <<-EOF
-[Peer]
-PublicKey = $(cat tempubkey)
-AllowedIPs = 10.0.0.$newnum/32
-EOF
-    wg set wg0 peer $(cat tempubkey) allowed-ips 10.0.0.$newnum/32
-    echo -e "\033[37;41m添加完成，文件：/etc/wireguard/$newname.conf\033[0m"
-    rm -f temprikey tempubkey
-
-    content=$(cat /etc/wireguard/$newname.conf)
-    echo "电脑端请下载$newname 开头的client.conf，手机端可直接使用软件扫码"
-    echo "${content}" | qrencode -o - -t UTF8
-}
 #开始菜单
 start_menu(){
     clear
     echo "========================="
     echo " 介绍：适用于CentOS7"
-    echo " 作者：wenzhi"
-    echo " 网站：https://github.com/wenzhifeifeidetutu"
+    echo " 作者：atrandys"
+    echo " 网站：www.atrandys.com"
+    echo " Youtube：atrandys"
     echo "========================="
     echo "1. 升级系统内核"
     echo "2. 安装wireguard"
     echo "3. 升级wireguard"
     echo "4. 卸载wireguard"
     echo "5. 显示客户端二维码"
-    echo "6. 增加用户"
     echo "0. 退出脚本"
     echo
     read -p "请输入数字:" num
@@ -182,10 +197,6 @@ start_menu(){
 	5)
 	content=$(cat /etc/wireguard/client.conf)
     	echo "${content}" | qrencode -o - -t UTF8
-	;;
-	6)
-	add_user
-
 	;;
 	0)
 	exit 1
